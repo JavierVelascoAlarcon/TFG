@@ -1,0 +1,376 @@
+---
+title: "Modelos y metodos de Programacion Multiobjetivo"
+author: "Javier Velasco Alarcón"
+date: "2023-11-07"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r, echo}
+if (!require("svDialogs", character.only = TRUE)) {
+  install.packages("svDialogs")
+  library(svDialogs)
+}
+if (!require("ggplot2", character.only = TRUE)) {
+  install.packages("ggplot2")
+  library(ggplot2)
+}
+if (!require("lpSolve", character.only = TRUE)) {
+  install.packages("lpSolve")
+  library(lpSolve)
+}
+
+#Con este codigo, comprobará si los paquetes estan o no instalados y los cargará.
+```
+
+
+```{r}
+#################### CON ESTE CHUNK INTRODUCIREMOS LOS DATOS DEL PROBLEMA MEDIANTE SOLICITUDES AL USUARIO ####################
+
+
+####### Cantidad de funciónes objetivo y si son max o min
+NFuncObj <-as.numeric(dlg_input(message = "Introduzca la cantidad de funciones objetivo que tendra el problema")$res)
+cantidad<-as.numeric(NFuncObj)
+while (is.na(cantidad) || cantidad==0) {  # Validar si el input es numérico distinto de 0
+  NFuncObj <- as.numeric(dlg_input(message = paste("Por favor, ingrese la cantidad de funciones objetivo que tendra el problema"))$res)
+  cantidad <- as.numeric(NFuncObj)
+  
+}
+
+SignosFObj <-dlg_message(message = "¿La/s funcion/es va/n a minimizar?", type = c("yesno"))$res
+
+SignosOpt<-c(rep(1,times=NFuncObj))
+
+if (SignosFObj=="no") {
+  
+  for (i in 1:NFuncObj) {
+    SignosFObj<-dlg_message(message = paste("Por favor, diga si la funcion objetivo",i,"esta minimizando: "), type = c("yesno"))$res
+
+    if (tolower(SignosFObj)=="yes") {
+    SignosOpt[i] <- 1}
+    else{SignosOpt[i] <- -1}
+  }
+}
+
+##### Coeficientes de la función objetivo (beneficios)
+Nvariables <-as.numeric(dlg_input(message = "introduzca la cantidad de variables que tendra el problema")$res)
+while (is.na(Nvariables) || Nvariables==0) {  # Validar si el input es numérico distinto de 0
+  Nvariables <- dlg_input(message = paste("Por favor, ingrese la cantidad de variables que tendra el problema"))$res
+  Nvariables <- as.numeric(Nvariables)
+  
+}
+
+Coeficientes <- matrix(0,nrow = NFuncObj, ncol = Nvariables)  # Crear una matriz para almacenar los coeficientes de las f.obj
+colnames(Coeficientes) <- paste("X", 1:Nvariables) #Damos nombre a las columnas de manera automatica
+
+for (i in 1:NFuncObj) {
+for (j in 1:Nvariables) {
+  MatrizFObj<-dlg_input(message = paste("Por favor, introduzca el coeficiente de la variable", j, "para la función objetivo",i,": "))$res
+  MatrizFObj <- as.numeric(MatrizFObj)
+  
+  while (is.na(MatrizFObj)) {  # Validar si el input es numérico
+    MatrizFObj <- dlg_input(message = paste("Por favor, introduzca el coeficiente de la variable", j, "para la función objetivo",i,": "))$res
+    MatrizFObj <- as.numeric(MatrizFObj)
+  }
+  Coeficientes[i,j] <- as.numeric(MatrizFObj)
+}}
+
+# Coeficientes de la matriz de restricciones
+
+NRestricciones <-as.numeric(dlg_input(message = "Introduzca la cantidad de restricciones que tendrá el problema")$res)
+while (is.na(NRestricciones)) {  # Validar si el input es numérico
+  NRestricciones <- as.numeric(dlg_input(message = paste("Por favor, introduzca la cantidad de restricciones que tendra el problema"))$res)
+}
+CoefRestricciones <- matrix(0,nrow=NRestricciones, ncol=Nvariables)  # Crear una matriz para almacenar los coeficientes de las restricciones
+colnames(CoefRestricciones) <- paste("X", 1:Nvariables) #Damos nombre a las columnas de manera automatica
+
+for (i in 1:NRestricciones) {
+  
+  for (j in 1:Nvariables) {
+  matrizR<-dlg_input(message = paste("Por favor, introduzca el coeficiente de la variable", j, "para la restriccion",i,": "))$res
+  matrizR<-as.numeric(matrizR)
+    while (is.na(matrizR)) {  # Validar si el input es numérico
+      matrizR <- dlg_input(message = paste("Por favor, introduzca el coeficiente de la variable", j, "para la restriccion",i,": "))$res
+      matrizR <- as.numeric(matrizR)
+  }
+  
+  CoefRestricciones[i,j] <- as.numeric(matrizR)
+  }
+}
+
+# Resultados de las ecuaciones
+TermIndep<-c(rep(0, times=NRestricciones))
+for (i in 1:NRestricciones) {
+  MatrizS<-dlg_input(message = paste("Por favor, introduzca el término independiente de la restriccion",i,": "))$res
+  valor<-as.numeric(MatrizS)
+  while (is.na(valor)) {  # Validar si el input es numérico
+    MatrizS <- dlg_input(message = paste("Por favor, ingrese un valor numérico para el término independiente de la restricción", i, ":"))$res
+    valor <- as.numeric(MatrizS)
+    }
+  TermIndep[i] <- as.numeric(valor)
+}
+
+# Tipos de restricciones (menor o igual)
+Signos<-c(rep(0, times=NRestricciones))
+respuesta<-dlg_message(message = paste("Quieres usar el mismo signo para todas las restricciones?"),type = ("yesno"))$res
+
+if (respuesta=="yes") {
+  signo<-dlg_input(message =paste("Que signo desea usar:"))$res
+  
+  while (signo!="<" &signo!="<=" &signo!="="&signo!=">" &signo!=">=") {  # Validar si el input es numérico
+    signo <- dlg_input(message = paste("Por favor, ingrese un signo entre <, <=, =, >=,> "))$res
+}
+  Signos <- c(rep(signo,times=NRestricciones))
+  
+}else{
+
+for (i in 1:NRestricciones) {
+  signo<-dlg_input(message = paste("Por favor, introduzca el signo de la restriccion",i,": "))$res
+  valor<-(signo)
+ 
+  while (valor!="<" &valor!="<=" &valor!="="&valor!=">" &valor!=">=") {  # Validar si el input es numérico
+    signo <- dlg_input(message = paste("Por favor, ingrese un signo entre <, <=, =, >=,> "))$res
+    valor <- (signo)
+  }
+  Signos[i] <- (valor)
+}
+}
+cat("Matriz funcion objetivo:\n")
+Coeficientes
+cat("Matriz restricciones:\n")
+CoefRestricciones;
+cat("Signos de las restricciones\n")
+Signos;
+cat("Terminos independientes\n")
+TermIndep
+```
+
+
+```{r}
+
+#Mas="yes"
+#while (Mas=="yes") {
+
+Metodo <- dlg_input(message = "si quiere usar 
+el método de las ponderaciones, ingrese 1, para el metodo de las
+             restricciones 2 y para el metodo de programacion por metas 3")$res
+
+{
+
+  while (Metodo!=1&Metodo!=2&Metodo!=3) {
+Metodo <- dlg_input(message = "Por favor elige el metodo que deseas usar (1=ponderaciones, 2=restricciones, 3=metas")$res}
+  
+####################################ACTUALIZACION COEFICIENTES##################################################
+
+CoeficienteActualizado=Coeficientes*SignosOpt
+##########################################PONDERACIONES#########################################################
+  if (Metodo==1) {
+
+PesosIniciales<-c(rep(0,times=NFuncObj))
+
+for (i in 1:(NFuncObj)) {
+  Peso<-as.numeric(dlg_input(message =paste("Por ultimo, escriba el peso que quiere dar a la funcion",i,":"))$res)
+  while (is.na(Peso)|| Peso==0) {  # Validar si el input es numérico
+    Peso <- as.numeric(dlg_input(message = paste("Por favor, escriba un numero que indique el peso de la funcion",i,":"))$res)
+  }
+  
+  PesosIniciales[i] <- Peso
+  
+}
+Pesos<-PesosIniciales/sum(PesosIniciales)
+
+CoefFObj=colSums(CoeficienteActualizado*Pesos)
+# Resolviendo el problema de optimización lineal
+resultado <- lp("min", CoefFObj, CoefRestricciones, Signos, TermIndep)
+
+  }
+##########################################RESTRICCIONES#########################################################
+  else if(Metodo==2) {
+
+NuevaFuncObj<-as.numeric(dlg_input(message =paste("¿Que función objetivo desea minimizar?"))$res)
+while (is.na(NuevaFuncObj)|| NuevaFuncObj==0|| NuevaFuncObj>NFuncObj) {  # Validar si el input es numérico
+  NuevaFuncObj <- as.numeric(dlg_input(message = paste("Por favor, diga que función objetivo desea minimizar"))$res)
+}
+
+NuevoCoeficiente<-CoeficienteActualizado[NuevaFuncObj,] #Creamos el nuevo coeficiente para la que será nuestra Funcion Objetivo
+NuevoCoefRestricciones<-rbind(CoefRestricciones,CoeficienteActualizado[-NuevaFuncObj,]) #Actualizamos la matriz de cieficientes de las restricciones para añadir las F.O que pasan a ser restricciones
+
+
+AnterioresCoeficientes<-matrix((CoeficienteActualizado[-NuevaFuncObj,]),nrow = NFuncObj-1,ncol = Nvariables)
+colnames(AnterioresCoeficientes) <- paste("X", 1:Nvariables) #Damos nombre a las columnas de manera automatica
+
+for (i in 1:(NFuncObj-1)) {
+  ResultadoIndividualMin<- c(rep(0,times=NFuncObj-1))
+  ResultadoIndividualMax<- c(rep(0,times=NFuncObj-1))
+  SolucionIndividualMin<-lp("min",AnterioresCoeficientes[i,],CoefRestricciones,Signos,TermIndep)
+  ResultadoIndividualMin[i]<-sum(AnterioresCoeficientes[i,] * SolucionIndividualMin$solution)
+  SolucionIndividualMax<-lp("max",AnterioresCoeficientes[i,],CoefRestricciones,Signos,TermIndep)
+  ResultadoIndividualMax[i]<-sum(AnterioresCoeficientes[i,] * SolucionIndividualMax$solution)
+}
+
+NuevosTermIndep<-c(TermIndep,(c(rep(0,NFuncObj-1))))
+
+for (i in 1:(NFuncObj-1)) {
+  TermIndepFObj<-as.numeric(dlg_input(message = paste("Por favor, introduzca el término independiente para la antigua Función Objetivo",i,"(Tenga en cuenta que el nuevo orden no tiene en cuenta la funcion objetivo que vamos a minimizar por este metodo):"), default = paste("Valor permitido entre",ResultadoIndividualMin[i],"y ",ResultadoIndividualMax[i]))$res)
+  
+  while (is.na(TermIndepFObj)||TermIndepFObj>ResultadoIndividualMax[i]||TermIndepFObj<ResultadoIndividualMin[i]) {  # Validar si el input es numérico y es un numero permitido
+    TermIndepFObj <- as.numeric(dlg_input(message = paste("Por favor, introduzca el término independiente para la antigua Función Objetivo",i,":"), default = paste("Valor permitido entre",ResultadoIndividualMin[i],"y ",ResultadoIndividualMax[i]))$res)
+
+  }
+  
+  NuevosTermIndep[NRestricciones+i] <- as.numeric(TermIndepFObj)
+  
+}
+
+NuevosSignos<-c(Signos,(c(rep("<=",NFuncObj-1))))
+
+resultado<-lp("min",NuevoCoeficiente,NuevoCoefRestricciones,NuevosSignos,NuevosTermIndep)
+  }
+
+##########################################METAS#################################################################
+
+    else {
+      
+#Creamos la nueva funcion objetivo
+NuevoCoeficiente<-matrix(c(rep(0, Nvariables), rep(1, NFuncObj)), nrow = 1)
+colnames(NuevoCoeficiente) <- c(paste0("x", 1:Nvariables), paste0("γ", 1:NFuncObj))#Nombramos
+
+
+#Creamos la nueva matriz de restricciones, añadiendo las filas para las funciones objetivo y las columnas para los gamma
+NuevoCoefRestricciones<-rbind(cbind(rbind(CoefRestricciones,CoeficienteActualizado),rbind(matrix(0, nrow = NRestricciones, ncol = NFuncObj),matrix(-diag(NFuncObj), nrow = NFuncObj, ncol = NFuncObj))),cbind(matrix(0, nrow = NFuncObj, ncol =Nvariables),matrix(diag(NFuncObj), nrow = NFuncObj, ncol = NFuncObj))) 
+#Explicacion: Con este codigo, hemos cogido la matriz de coeficiente de las restricciones y hemos añadido como fila los coeficientes de las funciones objetivo. A continuacion, hemos añadido tantas columnas como funciones objetivo tenemos y, para estas columnas, en las filas de las restricciones completamos con 0 mientras que en las filas de las funciones objetivo ponemos una matriz identidad negativa. Por ultimo, añadimos tantas filas como funciones objetivo tenemos. En estas filas, creamos una matriz identidad unicamente para las columnas que hacen referencia a los gamma, los cuales serviran para crear las restricciones de que deben ser >=0
+
+colnames(NuevoCoefRestricciones) <- c(paste0("x", 1:Nvariables), paste0("γ", 1:NFuncObj))#Nombramos
+
+#A continuacion vamos a calcular los valores utopicos
+for (i in 1:(NFuncObj)) {
+  ResultadoIndividualMin<- c(rep(0,times=NFuncObj))
+  SolucionIndividualMin<-lp("min",CoeficienteActualizado[i,],CoefRestricciones,Signos,TermIndep)
+  ResultadoIndividualMin[i]<-sum(CoeficienteActualizado[i,] * SolucionIndividualMin$solution)
+
+}
+
+NuevosTermIndep<-c(TermIndep,(c(rep(0,NFuncObj*2))))
+
+for (i in 1:(NFuncObj)) {
+  TermIndepFObj<-as.numeric(dlg_input(message = paste("Por favor, introduzca el término independiente para la antigua Función Objetivo",i,"(Tenga en cuenta que el nuevo orden no tiene en cuenta la funcion objetivo que vamos a minimizar por este metodo):"), default = paste("Valor permitido inferior o igual a",ResultadoIndividualMin[i]))$res)
+  
+  while (is.na(TermIndepFObj)||TermIndepFObj>ResultadoIndividualMin[i]) {  # Validar si el input es numérico y es un numero permitido
+    TermIndepFObj <- as.numeric(dlg_input(message = paste("Por favor, introduzca el término independiente para la antigua Función Objetivo",i,":"), default = paste("Valor permitido inferior o igual a",ResultadoIndividualMin[i]))$res)
+
+  }
+  
+  NuevosTermIndep[NRestricciones+i] <- as.numeric(TermIndepFObj)
+  
+}
+
+ºNuevosSignos<-c(Signos,(c(rep("<=",NFuncObj),rep(">=",NFuncObj))))
+
+resultado<-lp("min",NuevoCoeficiente,NuevoCoefRestricciones,NuevosSignos,NuevosTermIndep)
+      
+      }
+}
+
+
+
+if (Metodo==1) {MetodoUsado="de Ponderaciones."
+  
+}else(if(Metodo==2){MetodoUsado="de Restricciones."}else(MetodoUsado="de Metas."))
+
+#Mas<-dlg_message(message = paste("Quiere probar con otro método?"), type =  c("yesno"))$res
+#}
+```
+
+```{r}
+# Imprimir resumen del problema
+cat("\nPara el problema inicial:\n\n")
+
+cat("FUNCIONES OBJETIVO:\n")
+for (i in 1:NFuncObj) {
+  if (SignosOpt[i] == 1) {
+    cat(paste("Minimizar ", sep = ""))
+  } else {
+    cat(paste("Maximizar ", sep = ""))
+  }
+  cat(paste(": ", sep = ""))
+  cat(paste(paste(Coeficientes[i,], paste("x", 1:Nvariables, sep = "") , sep = " * ", collapse = " + ")), "\n")
+}
+
+cat("\nRESTRICCIONES:\n")
+for (i in 1:NRestricciones) {
+  cat(paste("Restricción", i, ": ", sep = ""))
+  cat(paste(paste(CoefRestricciones[i,], paste("x", 1:Nvariables, sep = "") , sep = " * ", collapse = " + ")), " ", Signos[i], " ", TermIndep[i], "\n")
+}
+
+#MODELO
+
+cat("\nSe ha realizado el metodo",MetodoUsado,"\n")
+if (Metodo==1) {
+cat("Los pesos ponderados usados han sido\n")
+for (i in 1:length(Pesos)) {
+cat(Pesos[i],"para la funcion objetivo",(i), "\n")}
+cat("\nQuedando la funcion objetivo como:\n")
+cat("Minimizar: ")
+for (i in 1:Nvariables) {
+  if (i > 1) {
+    cat(" + ")
+  }
+  cat(paste(CoefFObj[i], "x", i, sep = "", collapse = " * "))
+}
+cat("\n")
+}else
+if(Metodo==2) {cat("Se ha mantenido como funcion objetivo:\n")
+  if (SignosOpt[NuevaFuncObj] == 1) {
+    cat(paste("Minimizar ", sep = ""))
+  } else {
+    cat(paste("Maximizar ", sep = ""))
+  }
+cat(paste(paste(NuevoCoeficiente, paste("x", 1:Nvariables, sep = "") , sep = " * ", collapse = " + ")), "\n")
+cat("\nEl resto de funciones objetivo han pasado a ser las siguientes restricciones:\n")
+for (i in 1:(NFuncObj-1)) {
+    cat(paste("Restricción", NRestricciones+i, ": ", sep = ""))
+  cat(paste(paste(CoeficienteActualizado[-NuevaFuncObj,], paste("x", 1:Nvariables, sep = "") , sep = " * ", collapse = " + ")), " ", NuevosSignos[NRestricciones+i], " ", NuevosTermIndep[NRestricciones+i], "\n")
+}
+}else{
+  cat("Se ha creado la funcion objetivo:\n")
+    cat(paste("Minimizar ", sep = ""))
+cat(paste(NuevoCoeficiente[1:Nvariables], paste("x", 1:Nvariables, sep = "") , sep = " * ", collapse = " + "),"+",paste(NuevoCoeficiente[(Nvariables + 1):(NFuncObj+Nvariables)], "*", paste("γ", 1:NFuncObj, sep = ""), collapse = " + "), "\n")
+
+    
+cat("Las funciones objetivo del problema inicial, han pasado a ser restricciones <= al valor utópico. Además, se han añadido las que obligan a γi a ser positivo:\n")
+for (i in 1:(NFuncObj*2)) {
+    cat(paste("Restricción", NRestricciones+i, ": ", sep = ""))
+  cat(paste(paste(NuevoCoefRestricciones[NRestricciones+i,1:Nvariables], paste("x", 1:Nvariables, sep = "") , sep = " * ", collapse = " + "),"+",paste(NuevoCoefRestricciones[NRestricciones+i,(Nvariables+1):(Nvariables+NFuncObj)], paste("γ", 1:Nvariables, sep = "") , sep = " * ", collapse = " + ")), " ", NuevosSignos[NRestricciones+i], " ", NuevosTermIndep[NRestricciones+i], "\n")
+}
+}
+
+#RESULTADO
+if (Metodo==3) {
+cat("\nLa solucion optima es dar:\n")
+for (i in 1:Nvariables) {
+  cat("A la variable x",i,"el valor", resultado$solution[i],". \n")
+}
+  for (i in 1:Nvariables) {
+  cat("A la variable γ",i,"el valor", resultado$solution[NFuncObj+i],". \n")
+}
+
+cat("\nObteniendo como resultado:\n")
+for (i in 1:NFuncObj) {
+  cat(paste("Para la  funcion objetivo",i,":", sum(Coeficientes[i,] * resultado$solution[1:Nvariables]),"\n"))
+}
+
+}else{
+cat("\nLa solucion optima es dar:\n")
+for (i in 1:Nvariables) {
+  cat("A la variable x",i,"el valor", resultado$solution[i],". \n")
+}
+
+cat("\nObteniendo como valor optimo:\n")
+for (i in 1:NFuncObj) {
+  cat(paste("Para la  funcion objetivo",i,":", sum(Coeficientes[i,] * resultado$solution),"\n"))
+}}
+```
